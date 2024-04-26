@@ -14,6 +14,9 @@ Employee Management: Maintain staff profiles, schedules, and performance evaluat
 Reporting and Analytics: Generate reports and analyze data to identify trends and opportunities for optimization.
 ## Technologies Used
 Data Collection and Management: PL/SQL, Informatica PowerCenter
+
 Web Application Development: Python, Streamlit
+
 Data Visualization: Power BI
+
 Database: Oracle
