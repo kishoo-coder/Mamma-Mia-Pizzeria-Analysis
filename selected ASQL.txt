@@ -1,0 +1,236 @@
+--This query first calculates the order counts for each item, quarter, and year combination in a CTE named OrderCounts. 
+--Then, it uses ROW_NUMBER() window function to rank the rows within each quarter and year partition based on the order counts in descending order. 
+--Finally, it selects only the rows where the row number is 1, which corresponds to the maximum order count for each quarter and year combination.
+WITH OrderCounts AS (
+    SELECT 
+        item_id,
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'Q') AS quarter,
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') AS year,
+        COUNT(order_id) AS order_count
+    FROM 
+        orders_fact
+    GROUP BY 
+        item_id, TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY'), TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'Q')
+)
+SELECT 
+    item_id,
+    quarter,
+    year,
+    order_count
+FROM 
+    (
+        SELECT 
+            item_id,
+            quarter,
+            year,
+            order_count,
+            ROW_NUMBER() OVER (PARTITION BY year, quarter ORDER BY order_count DESC) AS row_num
+        FROM 
+            OrderCounts
+    ) ranked
+WHERE 
+    row_num <= 2
+ORDER BY 
+    year, quarter;
+-- sum of sales for each quarter per year
+SELECT 
+    DISTINCT TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'Q') AS quarter,
+    TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') as year,
+    SUM(quantity * price) OVER (PARTITION BY TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY'),TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'Q')) AS total_sum
+FROM 
+    orders_fact
+ORDER BY 
+    quarter;
+-- Top purpose
+select purpose,count(purpose) as count
+from reservation_fact
+group by purpose 
+order by count(purpose) desc; 
+----------============The query essentially retrieves the profit for each item in the year 2016 and compares it to the profit from the previous year, showing -----the percentage change.
+WITH Profits AS (
+    SELECT 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') AS Order_Year,
+        item_id, 
+        SUM(quantity * (price - cost)) AS Profit
+    FROM 
+        orders_fact
+    GROUP BY 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY'), item_id
+),
+PreviousYearProfit AS (
+    SELECT 
+        item_id,
+        Profit AS Current_Year_Profit,
+        LAG(Profit) OVER (PARTITION BY item_id ORDER BY Order_Year) AS Previous_Year_Profit,
+        Order_Year
+    FROM 
+        Profits
+)
+SELECT 
+    p.Order_Year,
+    p.item_id,
+    p.Profit,
+    ROUND(((p.Profit - py.Previous_Year_Profit) * 100 / py.Previous_Year_Profit), 2) AS Profit_Compared_To_Last_Year
+FROM 
+    Profits p
+LEFT JOIN 
+    PreviousYearProfit py ON p.item_id = py.item_id AND p.Order_Year = py.Order_Year 
+WHERE 
+    p.Order_Year = 2016
+ORDER BY 
+    Profit_Compared_To_Last_Year ;
+---------======== the most 3 items bought together per each year 
+WITH ItemPairs AS (
+    SELECT 
+        TO_CHAR(TO_DATE(o1.order_date, 'DD-MM-YY'), 'YYYY') AS Order_Year,
+        o1.item_id AS Item1,
+        o2.item_id AS Item2,
+        COUNT(*) AS Pair_Count
+    FROM 
+        orders_fact o1
+    INNER JOIN 
+        orders_fact o2 ON o1.order_id = o2.order_id AND o1.item_id < o2.item_id
+    GROUP BY 
+        TO_CHAR(TO_DATE(o1.order_date, 'DD-MM-YY'), 'YYYY'), o1.item_id, o2.item_id
+),
+RankedPairs AS (
+    SELECT 
+        Order_Year,
+        Item1,
+        Item2,
+        Pair_Count,
+        ROW_NUMBER() OVER (PARTITION BY Order_Year ORDER BY Pair_Count DESC) AS Rank
+    FROM 
+        ItemPairs
+)
+SELECT 
+    Order_Year,
+    Item1,
+    Item2,
+    Pair_Count
+FROM 
+    RankedPairs
+WHERE 
+    Rank <=3 ;
+-------------============ Cancellation Rate
+WITH OrderCounts AS (
+    SELECT 
+        COUNT(*) AS total_orders,
+        COUNT(CASE WHEN status_order = 'Cancelled' THEN 1 END) AS canceled_orders
+    FROM 
+        reservation_fact
+)
+SELECT 
+    canceled_orders,
+    total_orders,
+    round((canceled_orders / total_orders) * 100,2) AS cancellation_rate
+FROM 
+    OrderCounts;
+---------------========= Top 3 hours for reservation per each year
+WITH HourlyReservationCounts AS (
+    SELECT 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') AS year,
+        SUBSTR(order_time, 1, INSTR(order_time, ':') - 1) || SUBSTR(order_time, INSTR(order_time, ' ') + 1) AS hour,
+        COUNT(booking_id) AS number_of_reservations,
+        ROW_NUMBER() OVER (PARTITION BY TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') ORDER BY COUNT(booking_id) DESC) AS hour_rank
+    FROM 
+        orders_fact
+    GROUP BY 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY'),
+        SUBSTR(order_time, 1, INSTR(order_time, ':') - 1) || SUBSTR(order_time, INSTR(order_time, ' ') + 1)
+)
+SELECT 
+    year,
+    hour,
+    number_of_reservations
+FROM 
+    HourlyReservationCounts
+WHERE 
+    hour_rank <= 3
+ORDER BY 
+    year, hour_rank;
+----------==== min and max number of reservaions for each table_no and its party no
+SELECT 
+    distinct table_number,
+    party_no ,
+    COUNT(*)over(partition by table_number)as cnt 
+FROM 
+    reservation_fact , seating_dim 
+    where table_number = table_no
+    order by cnt desc;
+--------------- total_quantity per category
+select category,sum(quantity) as total_quantity
+from INVENTORY_DIM 
+group by category
+order by total_quantity desc;
+---------=== items per category
+select category,count(id) as total_items
+from INGREDIENT_DIM 
+group by category
+order by total_items desc;
+----------==== Most Take away orders peak hours
+WITH HourlyOrderCounts AS (
+    SELECT 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') AS year,
+        SUBSTR(order_time, 1, INSTR(order_time, ':') - 1) || SUBSTR(order_time, INSTR(order_time, ' ') + 1) AS hour,
+        COUNT(order_id) AS order_count,
+        ROW_NUMBER() OVER (PARTITION BY TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY') ORDER BY COUNT(order_id) DESC) AS hour_rank
+    FROM 
+        orders_fact
+    where 
+    STATUS = 'Take away'
+    GROUP BY 
+        TO_CHAR(TO_DATE(order_date, 'DD-MM-YY'), 'YYYY'),
+        SUBSTR(order_time, 1, INSTR(order_time, ':') - 1) || SUBSTR(order_time, INSTR(order_time, ' ') + 1)
+    
+)
+SELECT 
+    year,
+    hour,
+    order_count
+FROM 
+    HourlyOrderCounts
+WHERE 
+    hour_rank <= 3
+ORDER BY 
+    year, hour_rank;
+------------Top Performers
+SELECT employee_id, MAX(performance) AS max_performance
+FROM empoyee_fact
+GROUP BY employee_id
+ORDER BY max_performance DESC;
+
+------------performance improvement
+SELECT 
+    employee_id, 
+    MIN(performance) AS initial_performance, 
+    MAX(performance) AS final_performance
+FROM 
+    empoyee_fact
+GROUP BY 
+    employee_id
+HAVING 
+    MAX(performance) > MIN(performance);
+
+------------Salary-Performance Correlation
+SELECT 
+    salary, 
+    round(AVG(performance),2) AS avg_performance
+FROM 
+    empoyee_fact
+GROUP BY 
+    salary
+ORDER BY 
+    salary;
+-------------- Employee Count by Role
+SELECT ROLE, COUNT(*) AS employee_count
+FROM EMPLOYEE_DIM
+GROUP BY ROLE;
+
+
+-------------- Average Salary by Shift Type
+SELECT SHIFT_TYPE, ROUND(AVG(SALARY),2) AS avg_salary
+FROM EMPLOYEE_DIM,EMPOYEE_FACT
+WHERE EMPLOYEE_DIM.employee_id = EMPOYEE_FACT.employee_id
+GROUP BY SHIFT_TYPE;
+
